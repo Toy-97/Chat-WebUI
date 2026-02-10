@@ -518,7 +518,11 @@ def chat():
             yield "Please set your API key and base URL in the settings."
             return
 
+        # Track the current state: None, 'reasoning', or 'content'
+        current_mode = None
+
         try:
+            # Create the stream (keeping your existing parameter logic)
             if parameters:
                 stream = openai_client.chat.completions.create(
                     model=selected_model,
@@ -533,35 +537,42 @@ def chat():
                     stream=True
                 )
 
-            # Track if we've sent the start tag for reasoning content
-            reasoning_started = False
-            reasoning_ended = False
-            
             for chunk in stream:
                 if not chunk.choices or not chunk.choices[0].delta:
                     continue
                 
-                # Handle regular content
-                if chunk.choices[0].delta.content is not None:
-                    # If we were outputting reasoning content, end it
-                    if reasoning_started and not reasoning_ended:
-                        yield "</think>"
-                        reasoning_ended = True
-                    yield chunk.choices[0].delta.content
+                delta = chunk.choices[0].delta
                 
-                # Handle reasoning content (if supported by the model)
-                if hasattr(chunk.choices[0].delta, 'reasoning_content') and chunk.choices[0].delta.reasoning_content is not None:
-                    # If this is the first reasoning content, start it
-                    if not reasoning_started:
+                # 1. Handle Reasoning Content
+                # We check truthiness (val) to ignore empty strings often sent as keep-alives
+                if hasattr(delta, 'reasoning_content') and delta.reasoning_content:
+                    if current_mode != 'reasoning':
+                        # We are entering reasoning mode
                         yield "<think>"
-                        reasoning_started = True
-                    yield chunk.choices[0].delta.reasoning_content
+                        current_mode = 'reasoning'
+                    yield delta.reasoning_content
+                
+                # 2. Handle Regular Content
+                # Use elif because a delta usually contains one or the other
+                elif delta.content:
+                    if current_mode == 'reasoning':
+                        # We are leaving reasoning mode
+                        yield "</think>"
+                        current_mode = 'content'
+                    yield delta.content
             
-            # If we started reasoning but never ended it, end it now
-            if reasoning_started and not reasoning_ended:
-                yield "</think>"
         except Exception as e:
+            # If an error occurs, ensure we close the tag if we are inside reasoning
+            if current_mode == 'reasoning':
+                yield "</think>"
+                current_mode = None # Update state so finally doesn't double-close
             yield f"An error occurred: {str(e)}"
+        
+        finally:
+            # FINAL SAFETY NET: Ensure the tag is closed even if the stream 
+            # ends abruptly without sending a final content chunk.
+            if current_mode == 'reasoning':
+                yield "end"
 
     return Response(generate(), mimetype='text/event-stream')
 
@@ -604,7 +615,11 @@ def continue_generation():
             yield "Please set your API key and base URL in the settings."
             return
 
+        # Track the current state: None, 'reasoning', or 'content'
+        current_mode = None
+
         try:
+            # Create the stream (keeping your existing parameter logic)
             if parameters:
                 stream = openai_client.chat.completions.create(
                     model=selected_model,
@@ -619,35 +634,42 @@ def continue_generation():
                     stream=True
                 )
 
-            # Track if we've sent the start tag for reasoning content
-            reasoning_started = False
-            reasoning_ended = False
-            
             for chunk in stream:
                 if not chunk.choices or not chunk.choices[0].delta:
                     continue
                 
-                # Handle regular content
-                if chunk.choices[0].delta.content is not None:
-                    # If we were outputting reasoning content, end it
-                    if reasoning_started and not reasoning_ended:
-                        yield "</think>"
-                        reasoning_ended = True
-                    yield chunk.choices[0].delta.content
+                delta = chunk.choices[0].delta
                 
-                # Handle reasoning content (if supported by the model)
-                if hasattr(chunk.choices[0].delta, 'reasoning_content') and chunk.choices[0].delta.reasoning_content is not None:
-                    # If this is the first reasoning content, start it
-                    if not reasoning_started:
+                # 1. Handle Reasoning Content
+                # We check truthiness (val) to ignore empty strings often sent as keep-alives
+                if hasattr(delta, 'reasoning_content') and delta.reasoning_content:
+                    if current_mode != 'reasoning':
+                        # We are entering reasoning mode
+                        yield "<think>"
+                        current_mode = 'reasoning'
+                    yield delta.reasoning_content
+                
+                # 2. Handle Regular Content
+                # Use elif because a delta usually contains one or the other
+                elif delta.content:
+                    if current_mode == 'reasoning':
+                        # We are leaving reasoning mode
                         yield "</think>"
-                        reasoning_started = True
-                    yield chunk.choices[0].delta.reasoning_content
+                        current_mode = 'content'
+                    yield delta.content
             
-            # If we started reasoning but never ended it, end it now
-            if reasoning_started and not reasoning_ended:
-                yield "</think>"
         except Exception as e:
+            # If an error occurs, ensure we close the tag if we are inside reasoning
+            if current_mode == 'reasoning':
+                yield "</think>"
+                current_mode = None # Update state so finally doesn't double-close
             yield f"An error occurred: {str(e)}"
+        
+        finally:
+            # FINAL SAFETY NET: Ensure the tag is closed even if the stream 
+            # ends abruptly without sending a final content chunk.
+            if current_mode == 'reasoning':
+                yield "end"
 
     return Response(generate(), mimetype='text/event-stream')
 
